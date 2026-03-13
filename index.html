@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CGM Overlay Graph</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #fff;
+      color: #333;
+      padding: 24px;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    /* Selector Area */
+    .selector-area {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .selector-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .selector-buttons button {
+      padding: 4px 12px;
+      border: 1px solid #ccc;
+      background: #fff;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .selector-buttons button:hover {
+      background: #f5f5f5;
+    }
+    .selector-grid {
+      display: grid;
+      grid-template-columns: auto repeat(7, 1fr);
+      gap: 4px 8px;
+    }
+    .selector-grid.dragging {
+      user-select: none;
+    }
+    .weekday-header {
+      font-size: 12px;
+      color: #888;
+      text-align: center;
+      padding-bottom: 2px;
+      cursor: pointer;
+      border-radius: 4px;
+      padding: 2px 4px;
+    }
+    .weekday-header:hover {
+      background: #e8f5e9;
+      color: #333;
+    }
+    .week-label {
+      font-size: 12px;
+      color: #888;
+      cursor: pointer;
+      border-radius: 4px;
+      padding: 3px 6px;
+      white-space: nowrap;
+    }
+    .week-label:hover {
+      background: #e8f5e9;
+      color: #333;
+    }
+    .day-cell {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    .day-cell:hover,
+    .day-cell.highlighted {
+      background: #e8f5e9;
+      font-weight: 600;
+    }
+    .day-cell input[type="checkbox"] {
+      cursor: pointer;
+    }
+    .color-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    /* Stats Area */
+    .stats-area {
+      margin-bottom: 12px;
+      font-size: 13px;
+    }
+    .stats-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .stats-table th, .stats-table td {
+      text-align: center;
+      padding: 2px 4px;
+      font-size: 12px;
+    }
+    .stats-table th {
+      color: #888;
+      font-weight: normal;
+    }
+    .stats-table td:first-child {
+      text-align: left;
+      color: #666;
+      width: 80px;
+    }
+    .stats-table td {
+      font-weight: 600;
+      color: #444;
+    }
+
+    /* Chart Area */
+    .chart-container {
+      position: relative;
+      height: 420px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="selector-area">
+      <div class="selector-buttons">
+        <button id="btn-select-all">Select All</button>
+        <button id="btn-clear">Clear</button>
+      </div>
+      <div class="selector-grid" id="selector-grid"></div>
+    </div>
+    <div class="stats-area" id="stats-area"></div>
+    <div class="chart-container">
+      <canvas id="cgm-chart"></canvas>
+    </div>
+  </div>
+
+  <script>
+    const PALETTE = [
+      '#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4',
+      '#42d4f4', '#f032e6', '#bfef45', '#fabed4', '#469990',
+      '#dcbeff', '#9A6324', '#800000', '#aaffc3', '#808000',
+      '#000075'
+    ];
+
+    const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    let chart = null;
+    let days = []; // {dateKey, label, points, color, weekday, weekRow}
+    let originalStyles = []; // [{borderColor, borderWidth}]
+
+    async function init() {
+      const text = await fetch('./cgm_values.csv').then(r => r.text());
+      const lines = text.trim().split('\n').slice(1);
+
+      const grouped = new Map();
+      for (const line of lines) {
+        const [tsStr, valStr] = line.split(',');
+        const d = new Date(tsStr);
+        const dateKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+        const x = d.getUTCHours() * 60 + d.getUTCMinutes();
+        const y = parseFloat(valStr);
+        if (!grouped.has(dateKey)) grouped.set(dateKey, []);
+        grouped.get(dateKey).push({ x, y });
+      }
+
+      const sortedKeys = [...grouped.keys()].sort();
+
+      // Determine the Monday of the first week for grid placement
+      const firstDate = new Date(sortedKeys[0] + 'T00:00:00Z');
+      const firstDow = (firstDate.getUTCDay() + 6) % 7; // Mon=0
+      // Find the Monday of that week
+      const firstMonday = new Date(firstDate);
+      firstMonday.setUTCDate(firstMonday.getUTCDate() - firstDow);
+
+      days = sortedKeys.map((key, i) => {
+        const pts = grouped.get(key).sort((a, b) => a.x - b.x);
+        const dt = new Date(key + 'T00:00:00Z');
+        const dow = (dt.getUTCDay() + 6) % 7; // Mon=0..Sun=6
+        const diffDays = Math.round((dt - firstMonday) / 86400000);
+        const weekRow = Math.floor(diffDays / 7);
+
+        return {
+          dateKey: key,
+          label: `${String(dt.getUTCMonth() + 1).padStart(2, '0')}/${String(dt.getUTCDate()).padStart(2, '0')}`,
+          points: pts,
+          color: PALETTE[i % PALETTE.length],
+          weekday: dow,
+          weekRow
+        };
+      });
+
+      buildSelector();
+      buildStats();
+      buildChart();
+      wireEvents();
+    }
+
+    function buildSelector() {
+      const grid = document.getElementById('selector-grid');
+      const maxWeekRow = Math.max(...days.map(d => d.weekRow));
+
+      // Blank corner cell + weekday headers
+      grid.appendChild(document.createElement('div'));
+      for (let col = 0; col < 7; col++) {
+        const header = document.createElement('div');
+        header.className = 'weekday-header';
+        header.textContent = WEEKDAYS[col];
+        header.dataset.weekday = col;
+        grid.appendChild(header);
+      }
+
+      // Build cells per week row with row labels
+      for (let row = 0; row <= maxWeekRow; row++) {
+        const rowLabel = document.createElement('div');
+        rowLabel.className = 'week-label';
+        rowLabel.dataset.weekRow = row;
+        rowLabel.textContent = `W${row + 1}`;
+        grid.appendChild(rowLabel);
+
+        for (let col = 0; col < 7; col++) {
+          const day = days.find(d => d.weekRow === row && d.weekday === col);
+          const cell = document.createElement('div');
+          if (day) {
+            const idx = days.indexOf(day);
+            cell.className = 'day-cell';
+            cell.dataset.dayIndex = idx;
+            cell.innerHTML = `
+              <input type="checkbox" checked data-day-index="${idx}">
+              <span class="color-swatch" style="background:${day.color}"></span>
+              <span>${day.label}</span>
+            `;
+          }
+          grid.appendChild(cell);
+        }
+      }
+    }
+
+    const TIME_BUCKETS = [
+      { label: '00-03', min: 0, max: 180 },
+      { label: '03-06', min: 180, max: 360 },
+      { label: '06-09', min: 360, max: 540 },
+      { label: '09-12', min: 540, max: 720 },
+      { label: '12-15', min: 720, max: 900 },
+      { label: '15-18', min: 900, max: 1080 },
+      { label: '18-21', min: 1080, max: 1260 },
+      { label: '21-24', min: 1260, max: 1440 }
+    ];
+
+    function buildStats() {
+      const area = document.getElementById('stats-area');
+      let html = '<table class="stats-table"><thead><tr><th></th>';
+      for (const b of TIME_BUCKETS) {
+        html += `<th>${b.label}</th>`;
+      }
+      html += '</tr></thead><tbody>';
+      html += '<tr><td>Average</td>' + TIME_BUCKETS.map((_, i) => `<td id="stat-avg-${i}">—</td>`).join('') + '</tr>';
+      html += '<tr><td>In Range %</td>' + TIME_BUCKETS.map((_, i) => `<td id="stat-range-${i}">—</td>`).join('') + '</tr>';
+      html += '<tr><td>Low %</td>' + TIME_BUCKETS.map((_, i) => `<td id="stat-low-${i}">—</td>`).join('') + '</tr>';
+      html += '</tbody></table>';
+      area.innerHTML = html;
+      updateStats();
+    }
+
+    function updateStats() {
+      // Gather points from all selected (checked) days
+      const selectedIndices = [];
+      document.querySelectorAll('.day-cell input[type="checkbox"]').forEach(cb => {
+        if (cb.checked) selectedIndices.push(parseInt(cb.dataset.dayIndex));
+      });
+
+      for (let b = 0; b < TIME_BUCKETS.length; b++) {
+        const bucket = TIME_BUCKETS[b];
+        const points = [];
+        for (const idx of selectedIndices) {
+          for (const p of days[idx].points) {
+            if (p.x >= bucket.min && p.x < bucket.max) {
+              points.push(p.y);
+            }
+          }
+        }
+
+        const avgEl = document.getElementById(`stat-avg-${b}`);
+        const rangeEl = document.getElementById(`stat-range-${b}`);
+        const lowEl = document.getElementById(`stat-low-${b}`);
+
+        if (points.length === 0) {
+          avgEl.textContent = '—';
+          rangeEl.textContent = '—';
+          lowEl.textContent = '—';
+        } else {
+          const avg = Math.round(points.reduce((s, v) => s + v, 0) / points.length);
+          const inRange = Math.round((points.filter(v => v >= 70 && v <= 150).length / points.length) * 100);
+          const low = Math.round((points.filter(v => v < 70).length / points.length) * 100);
+          avgEl.textContent = avg;
+          rangeEl.textContent = inRange + '%';
+          lowEl.textContent = low + '%';
+        }
+      }
+    }
+
+    function buildChart() {
+      const datasets = days.map((day, i) => ({
+        label: day.label,
+        data: day.points,
+        borderColor: day.color,
+        backgroundColor: day.color,
+        borderWidth: 1.5,
+        pointRadius: 0,
+        pointHitRadius: 8,
+        tension: 0.2,
+        fill: false
+      }));
+
+      originalStyles = datasets.map(ds => ({
+        borderColor: ds.borderColor,
+        borderWidth: ds.borderWidth
+      }));
+
+      const ctx = document.getElementById('cgm-chart').getContext('2d');
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 0 },
+          interaction: {
+            mode: 'nearest',
+            intersect: false
+          },
+          scales: {
+            x: {
+              type: 'linear',
+              min: 0,
+              max: 1440,
+              ticks: {
+                stepSize: 180,
+                callback: v => {
+                  const h = String(Math.floor(v / 60)).padStart(2, '0');
+                  return `${h}:00`;
+                }
+              },
+              grid: { color: '#eee' }
+            },
+            y: {
+              type: 'linear',
+              suggestedMin: 30,
+              suggestedMax: 250,
+              title: { display: true, text: 'mg/dL' },
+              grid: { color: '#eee' }
+            }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                title: items => {
+                  if (!items.length) return '';
+                  const ds = items[0].dataset;
+                  const x = items[0].parsed.x;
+                  const h = String(Math.floor(x / 60)).padStart(2, '0');
+                  const m = String(Math.round(x % 60)).padStart(2, '0');
+                  return `${ds.label} ${h}:${m}`;
+                },
+                label: item => `${item.parsed.y} mg/dL`
+              }
+            },
+            annotation: {
+              annotations: {
+                rangeLow: {
+                  type: 'line',
+                  yMin: 70, yMax: 70,
+                  borderColor: 'rgba(130, 201, 161, 0.7)',
+                  borderWidth: 1,
+                  borderDash: [6, 4]
+                },
+                rangeHigh: {
+                  type: 'line',
+                  yMin: 150, yMax: 150,
+                  borderColor: 'rgba(130, 201, 161, 0.7)',
+                  borderWidth: 1,
+                  borderDash: [6, 4]
+                }
+              }
+            }
+          }
+        },
+        plugins: [highlightPlugin]
+      });
+    }
+
+    // Highlight logic
+    let highlightedIndex = null;
+
+    const highlightPlugin = {
+      id: 'dayHighlight',
+      afterEvent(chart, args) {
+        const evt = args.event;
+        if (evt.type === 'mousemove') {
+          const elements = chart.getElementsAtEventForMode(
+            evt, 'nearest', { intersect: false }, false
+          );
+          if (elements.length > 0) {
+            const idx = elements[0].datasetIndex;
+            if (highlightedIndex !== idx) {
+              applyHighlight(idx);
+            }
+          } else {
+            if (highlightedIndex !== null) {
+              clearHighlight();
+            }
+          }
+        }
+        if (evt.type === 'mouseout') {
+          clearHighlight();
+        }
+      }
+    };
+
+    function applyHighlight(activeIndex) {
+      highlightedIndex = activeIndex;
+      chart.data.datasets.forEach((ds, i) => {
+        if (i === activeIndex) {
+          ds.borderColor = originalStyles[i].borderColor;
+          ds.borderWidth = 3;
+        } else {
+          ds.borderColor = '#d5d5d5';
+          ds.borderWidth = 1;
+        }
+      });
+      chart.update('none');
+
+      // Highlight selector cell
+      document.querySelectorAll('.day-cell').forEach(cell => {
+        const idx = parseInt(cell.dataset.dayIndex);
+        cell.classList.toggle('highlighted', idx === activeIndex);
+      });
+    }
+
+    function clearHighlight() {
+      highlightedIndex = null;
+      chart.data.datasets.forEach((ds, i) => {
+        ds.borderColor = originalStyles[i].borderColor;
+        ds.borderWidth = originalStyles[i].borderWidth;
+      });
+      chart.update('none');
+
+      document.querySelectorAll('.day-cell').forEach(cell => {
+        cell.classList.remove('highlighted');
+      });
+    }
+
+    function getCheckbox(dayIndex) {
+      return document.querySelector(`input[data-day-index="${dayIndex}"]`);
+    }
+
+    function syncSelection() {
+      days.forEach((_, i) => {
+        const cb = getCheckbox(i);
+        chart.data.datasets[i].hidden = !cb.checked;
+      });
+      chart.update();
+      updateStats();
+    }
+
+    function wireEvents() {
+      // Force all checkboxes to checked on init (overrides browser form restoration)
+      document.querySelectorAll('.day-cell input[type="checkbox"]').forEach(cb => {
+        cb.checked = true;
+      });
+
+      // Checkbox toggle
+      document.querySelectorAll('.day-cell input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', () => syncSelection());
+      });
+
+      // Selector hover -> chart highlight
+      document.querySelectorAll('.day-cell').forEach(cell => {
+        const idx = parseInt(cell.dataset.dayIndex);
+        if (isNaN(idx)) return;
+        cell.addEventListener('mouseenter', () => {
+          if (!isDragging) applyHighlight(idx);
+        });
+        cell.addEventListener('mouseleave', () => {
+          if (!isDragging) clearHighlight();
+        });
+      });
+
+      // Select All / Clear buttons
+      document.getElementById('btn-select-all').addEventListener('click', () => {
+        document.querySelectorAll('.day-cell input[type="checkbox"]').forEach(cb => {
+          cb.checked = true;
+        });
+        syncSelection();
+      });
+
+      document.getElementById('btn-clear').addEventListener('click', () => {
+        document.querySelectorAll('.day-cell input[type="checkbox"]').forEach(cb => {
+          cb.checked = false;
+        });
+        syncSelection();
+      });
+
+      // --- Weekday column toggle ---
+      document.querySelectorAll('.weekday-header').forEach(header => {
+        const col = parseInt(header.dataset.weekday);
+        if (isNaN(col)) return;
+        header.addEventListener('click', () => {
+          const colDays = days.filter(d => d.weekday === col);
+          const allChecked = colDays.every(d => getCheckbox(days.indexOf(d)).checked);
+          colDays.forEach(d => { getCheckbox(days.indexOf(d)).checked = !allChecked; });
+          syncSelection();
+        });
+      });
+
+      // --- Week row toggle ---
+      document.querySelectorAll('.week-label').forEach(label => {
+        const row = parseInt(label.dataset.weekRow);
+        label.addEventListener('click', () => {
+          const rowDays = days.filter(d => d.weekRow === row);
+          const allChecked = rowDays.every(d => getCheckbox(days.indexOf(d)).checked);
+          rowDays.forEach(d => { getCheckbox(days.indexOf(d)).checked = !allChecked; });
+          syncSelection();
+        });
+      });
+
+      // --- Click-drag multi-select ---
+      const grid = document.getElementById('selector-grid');
+
+      document.querySelectorAll('.day-cell').forEach(cell => {
+        const idx = parseInt(cell.dataset.dayIndex);
+        if (isNaN(idx)) return;
+
+        cell.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          isDragging = true;
+          const cb = getCheckbox(idx);
+          dragAction = cb.checked ? false : true; // if checked, drag will uncheck
+          cb.checked = dragAction;
+          grid.classList.add('dragging');
+        });
+
+        cell.addEventListener('mouseenter', () => {
+          if (isDragging) {
+            getCheckbox(idx).checked = dragAction;
+          }
+        });
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (isDragging) {
+          isDragging = false;
+          grid.classList.remove('dragging');
+          syncSelection();
+        }
+      });
+    }
+
+    let isDragging = false;
+    let dragAction = null;
+
+    init();
+  </script>
+</body>
+</html>
