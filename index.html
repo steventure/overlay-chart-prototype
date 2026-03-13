@@ -190,8 +190,18 @@
       const firstMonday = new Date(firstDate);
       firstMonday.setUTCDate(firstMonday.getUTCDate() - firstDow);
 
+      const GAP_THRESHOLD = 15; // minutes — insert break if gap exceeds this
+
       days = sortedKeys.map((key, i) => {
-        const pts = grouped.get(key).sort((a, b) => a.x - b.x);
+        const raw = grouped.get(key).sort((a, b) => a.x - b.x);
+        // Insert null points to break the line at data gaps
+        const pts = [];
+        for (let j = 0; j < raw.length; j++) {
+          if (j > 0 && raw[j].x - raw[j - 1].x > GAP_THRESHOLD) {
+            pts.push({ x: (raw[j - 1].x + raw[j].x) / 2, y: null });
+          }
+          pts.push(raw[j]);
+        }
         const dt = new Date(key + 'T00:00:00Z');
         const dow = (dt.getUTCDay() + 6) % 7; // Mon=0..Sun=6
         const diffDays = Math.round((dt - firstMonday) / 86400000);
@@ -291,7 +301,7 @@
         const points = [];
         for (const idx of selectedIndices) {
           for (const p of days[idx].points) {
-            if (p.x >= bucket.min && p.x < bucket.max) {
+            if (p.y !== null && p.x >= bucket.min && p.x < bucket.max) {
               points.push(p.y);
             }
           }
@@ -326,7 +336,8 @@
         pointRadius: 0,
         pointHitRadius: 8,
         tension: 0.2,
-        fill: false
+        fill: false,
+        spanGaps: false
       }));
 
       originalStyles = datasets.map(ds => ({
