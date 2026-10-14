@@ -93,6 +93,16 @@
     .day-cell input[type="checkbox"] {
       cursor: pointer;
     }
+    /* Reserve the bold text's width so hovering doesn't shift neighboring cells */
+    .day-label {
+      display: inline-grid;
+    }
+    .day-label::after {
+      content: attr(data-label);
+      font-weight: 600;
+      visibility: hidden;
+      height: 0;
+    }
     .color-swatch {
       width: 10px;
       height: 10px;
@@ -254,7 +264,7 @@
             cell.innerHTML = `
               <input type="checkbox" checked data-day-index="${idx}">
               <span class="color-swatch" style="background:${day.color}"></span>
-              <span>${day.label}</span>
+              <span class="day-label" data-label="${day.label}">${day.label}</span>
             `;
           }
           grid.appendChild(cell);
