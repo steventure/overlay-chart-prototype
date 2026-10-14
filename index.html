@@ -94,6 +94,9 @@
     }
     .day-cell input[type="checkbox"] {
       cursor: pointer;
+      /* Let clicks fall through to the cell's mousedown handler; otherwise the
+         checkbox's native toggle undoes the cell's toggle */
+      pointer-events: none;
     }
     .color-swatch {
       width: 10px;
