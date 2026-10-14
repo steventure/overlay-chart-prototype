@@ -143,6 +143,68 @@
       position: relative;
       height: 420px;
     }
+
+    /* Responsive: date selector */
+    .day-label-short {
+      display: none;
+    }
+    /* Not enough room beside the grid: put the buttons in a row above it */
+    @media (max-width: 800px) {
+      .selector-area {
+        flex-direction: column;
+        gap: 8px;
+      }
+      .selector-buttons {
+        flex-direction: row;
+      }
+    }
+    /* Phones: full-size cells no longer fit, so cells become color chips */
+    @media (max-width: 700px) {
+      body {
+        padding: 16px;
+      }
+      .selector-grid {
+        grid-template-columns: auto repeat(7, minmax(0, 1fr));
+        gap: 4px;
+      }
+      .week-label {
+        padding: 3px 2px;
+      }
+      .day-cell {
+        position: relative;
+        justify-content: center;
+        gap: 3px;
+        padding: 4px 2px;
+        border: 1px solid #e0e0e0;
+        border-radius: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+      /* Checkbox stays focusable for keyboard use, just not visible */
+      .day-cell input[type="checkbox"] {
+        position: absolute;
+        opacity: 0;
+        width: 1px;
+        height: 1px;
+      }
+      .day-cell:has(input:focus-visible) {
+        outline: 2px solid #4a90d9;
+        outline-offset: 1px;
+      }
+      .day-cell:has(input:not(:checked)) {
+        opacity: 0.35;
+      }
+      .day-cell .color-swatch {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+      }
+      .day-label-full {
+        display: none;
+      }
+      .day-label-short {
+        display: inline-grid;
+      }
+    }
   </style>
 </head>
 <body>
@@ -259,12 +321,14 @@
           const cell = document.createElement(day ? 'label' : 'div');
           if (day) {
             const idx = days.indexOf(day);
+            const dayNum = parseInt(day.label.split('/')[1]);
             cell.className = 'day-cell';
             cell.dataset.dayIndex = idx;
             cell.innerHTML = `
               <input type="checkbox" checked data-day-index="${idx}">
               <span class="color-swatch" style="background:${day.color}"></span>
-              <span class="day-label" data-label="${day.label}">${day.label}</span>
+              <span class="day-label day-label-full" data-label="${day.label}">${day.label}</span>
+              <span class="day-label day-label-short" data-label="${dayNum}">${dayNum}</span>
             `;
           }
           grid.appendChild(cell);
