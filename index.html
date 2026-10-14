@@ -48,9 +48,6 @@
       grid-template-columns: auto repeat(7, 1fr);
       gap: 4px 8px;
     }
-    .selector-grid.dragging {
-      user-select: none;
-    }
     .weekday-header {
       font-size: 12px;
       color: #888;
@@ -86,6 +83,7 @@
       font-size: 13px;
       transition: background 0.15s;
       white-space: nowrap;
+      user-select: none;
     }
     .day-cell:hover,
     .day-cell.highlighted {
@@ -94,9 +92,6 @@
     }
     .day-cell input[type="checkbox"] {
       cursor: pointer;
-      /* Let clicks fall through to the cell's mousedown handler; otherwise the
-         checkbox's native toggle undoes the cell's toggle */
-      pointer-events: none;
     }
     .color-swatch {
       width: 10px;
@@ -250,7 +245,8 @@
 
         for (let col = 0; col < 7; col++) {
           const day = days.find(d => d.weekRow === row && d.weekday === col);
-          const cell = document.createElement('div');
+          // Populated cells are labels so clicking anywhere toggles the checkbox
+          const cell = document.createElement(day ? 'label' : 'div');
           if (day) {
             const idx = days.indexOf(day);
             cell.className = 'day-cell';
@@ -510,12 +506,8 @@
       document.querySelectorAll('.day-cell').forEach(cell => {
         const idx = parseInt(cell.dataset.dayIndex);
         if (isNaN(idx)) return;
-        cell.addEventListener('mouseenter', () => {
-          if (!isDragging) applyHighlight(idx);
-        });
-        cell.addEventListener('mouseleave', () => {
-          if (!isDragging) clearHighlight();
-        });
+        cell.addEventListener('mouseenter', () => applyHighlight(idx));
+        cell.addEventListener('mouseleave', () => clearHighlight());
       });
 
       // Select All / Clear buttons
@@ -555,41 +547,7 @@
           syncSelection();
         });
       });
-
-      // --- Click-drag multi-select ---
-      const grid = document.getElementById('selector-grid');
-
-      document.querySelectorAll('.day-cell').forEach(cell => {
-        const idx = parseInt(cell.dataset.dayIndex);
-        if (isNaN(idx)) return;
-
-        cell.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          isDragging = true;
-          const cb = getCheckbox(idx);
-          dragAction = cb.checked ? false : true; // if checked, drag will uncheck
-          cb.checked = dragAction;
-          grid.classList.add('dragging');
-        });
-
-        cell.addEventListener('mouseenter', () => {
-          if (isDragging) {
-            getCheckbox(idx).checked = dragAction;
-          }
-        });
-      });
-
-      document.addEventListener('mouseup', () => {
-        if (isDragging) {
-          isDragging = false;
-          grid.classList.remove('dragging');
-          syncSelection();
-        }
-      });
     }
-
-    let isDragging = false;
-    let dragAction = null;
 
     init();
   </script>
